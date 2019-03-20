@@ -106,7 +106,7 @@ static esp_err_t camera_data_proc(uint8_t* data, int* pos)
     return ESP_OK;
 }
 
-void app_main()
+void camera_task()
 {
     printf("Starting...\n");
     printf("Initializing master I2C...\n");
@@ -127,4 +127,10 @@ void app_main()
         printf("X: %d\tY: %d\n", pos[0], pos[1]);
         vTaskDelay(500 / portTICK_RATE_MS);
     }
+}
+
+void app_main()
+{
+    printf("Starting...\n");
+    xTaskCreate(camera_task, "camera_task", 1024 * 2, NULL, 10, NULL);
 }
