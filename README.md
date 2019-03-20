@@ -1,5 +1,3 @@
-# Hello World Example
+# Glove
 
-Starts a FreeRTOS task to print "Hello World"
-
-See the README.md file in the upper level 'examples' directory for more information about examples.
+Code for ESP32 on glove for 373 W19 project
