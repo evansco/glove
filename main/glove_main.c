@@ -18,8 +18,9 @@
 #include "driver/adc.h"
 #include "esp_adc_cal.h"
 
+#define GLOVE_TAG "GLOVE"
 #define SPP_TAG "SPP_INITIATOR_DEMO"
-#define EXCAMPLE_DEVICE_NAME "ESP_SPP_INITIATOR"
+#define EXAMPLE_DEVICE_NAME "ESP_SPP_INITIATOR"
 
 #define I2C_MASTER_NUM 0
 #define I2C_MASTER_SDA 26
@@ -38,7 +39,7 @@
 #define DEFAULT_VREF 3300 // 3.3V
 #define NO_OF_SAMPLES 64
 #define ADC_UNIT ADC_UNIT_1
-#define ADC_CHANNEL ADC_CHANNEL_6
+#define ADC_CHANNEL ADC_CHANNEL_6 // ADC1: GPIO34, ADC2: GPIO14
 #define ADC_ATTEN ADC_ATTEN_DB_0 // None
 #define BENT_THRESHOLD 4095
 #define UNBENT_THRESHOLD 3000
@@ -193,24 +194,23 @@ static uint32_t sample_adc() {
 }
 
 
-void camera_task(void* spp_handle)
+void measure_task(void* spp_handle)
 {
     uint8_t buf[16];
     int pos[2];
     for (;;) {
-        printf("Reading from camera...\n");
+        ESP_LOGI(GLOVE_TAG, "Reading from camera...\n");
         ESP_ERROR_CHECK(camera_read(buf));
         for (unsigned i = 0; i < 16; ++i) {
-            printf("%x ", buf[i]);
+            ESP_LOGI(GLOVE_TAG, "%x", buf[i]);
         }
-        printf("\n");
         camera_data_proc(buf, pos);
-        printf("X: %d\tY: %d\n", pos[0], pos[1]);
+        ESP_LOGI(GLOVE_TAG, "X: %d\tY: %d\n", pos[0], pos[1]);
         
         uint8_t bent = get_bent(sample_adc());
         buf[0] = bent;
-        if (bent) printf("Got bent\n");
-        else printf("Did not get bent\n");
+        if (bent) ESP_LOGI(GLOVE_TAG, "Got bent\n");
+        else ESP_LOGI(GLOVE_TAG, "Did not get bent\n");
 
         esp_spp_write((uint32_t)spp_handle, 4, buf);
         vTaskDelay(500 / portTICK_RATE_MS);
@@ -222,7 +222,7 @@ static void esp_spp_cb(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
     switch (event) {
     case ESP_SPP_INIT_EVT:
         ESP_LOGI(SPP_TAG, "ESP_SPP_INIT_EVT");
-        esp_bt_dev_set_device_name(EXCAMPLE_DEVICE_NAME);
+        esp_bt_dev_set_device_name(EXAMPLE_DEVICE_NAME);
         esp_bt_gap_set_scan_mode(ESP_BT_CONNECTABLE, ESP_BT_GENERAL_DISCOVERABLE);
         esp_bt_gap_start_discovery(inq_mode, inq_len, inq_num_rsps);
 
@@ -236,7 +236,7 @@ static void esp_spp_cb(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
     case ESP_SPP_OPEN_EVT:
         ESP_LOGI(SPP_TAG, "ESP_SPP_OPEN_EVT");
         // TODO: Start data collection task
-        xTaskCreate(camera_task, "camera_task", 1024 * 2, (void*)param->write.handle, 10, &ct_handle);
+        xTaskCreate(measure_task, "measure_task", 1024 * 2, (void*)param->write.handle, 10, &ct_handle);
         break;
     case ESP_SPP_CLOSE_EVT:
         ESP_LOGI(SPP_TAG, "ESP_SPP_CLOSE_EVT");
@@ -274,7 +274,7 @@ static void esp_bt_gap_cb(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t *pa
         ESP_LOGI(SPP_TAG, "ESP_BT_GAP_DISC_RES_EVT");
         esp_log_buffer_hex(SPP_TAG, param->disc_res.bda, ESP_BD_ADDR_LEN);
         if (!memcmp(param->disc_res.bda, remote_device_addr, ESP_BD_ADDR_LEN)) {
-            printf("Found match\n");
+            ESP_LOGI(GLOVE_TAG, "Found match\n");
             memcpy(peer_bd_addr, param->disc_res.bda, ESP_BD_ADDR_LEN);
             esp_spp_start_discovery(peer_bd_addr);
             esp_bt_gap_cancel_discovery();
@@ -322,15 +322,13 @@ static void esp_bt_gap_cb(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t *pa
 
 void app_main()
 {
-    printf("Starting...\n");
-    printf("Initializing master I2C...\n");
+    ESP_LOGI(GLOVE_TAG, "Starting...\n");
+    ESP_LOGI(GLOVE_TAG, "Initializing master I2C...\n");
     ESP_ERROR_CHECK(i2c_master_init());
-    printf("Initializing camera...\n");
+    ESP_LOGI(GLOVE_TAG, "Initializing camera...\n");
     ESP_ERROR_CHECK(camera_init());
-    printf("Initializing ADC %d\n", ADC_UNIT);
+    ESP_LOGI(GLOVE_TAG, "Initializing ADC %d\n", ADC_UNIT);
     adc_init();
-
-    //xTaskCreate(camera_task, "camera_task", 1024 * 2, NULL, 10, NULL);
 
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
