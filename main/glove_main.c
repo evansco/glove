@@ -14,6 +14,9 @@
 #include "esp_bt_device.h"
 #include "esp_spp_api.h"
 #include "driver/i2c.h"
+#include "driver/gpio.h"
+#include "driver/adc.h"
+#include "esp_adc_cal.h"
 
 #define SPP_TAG "SPP_INITIATOR_DEMO"
 #define EXCAMPLE_DEVICE_NAME "ESP_SPP_INITIATOR"
@@ -30,6 +33,15 @@
 
 #define CAMERA_INIT_CMD_LEN 2
 #define CAMERA_INIT_NUM_CMDS 6
+
+// ADC
+#define DEFAULT_VREF 3300 // 3.3V
+#define NO_OF_SAMPLES 64
+#define ADC_UNIT ADC_UNIT_1
+#define ADC_CHANNEL ADC_CHANNEL_6
+#define ADC_ATTEN ADC_ATTEN_DB_0 // None
+#define BENT_THRESHOLD 4095
+#define UNBENT_THRESHOLD 3000
 
 static const esp_spp_mode_t esp_spp_mode = ESP_SPP_MODE_CB;
 
@@ -136,6 +148,51 @@ static esp_err_t camera_data_proc(uint8_t* data, int* pos)
     return ESP_OK;
 }
 
+uint8_t get_bent(uint32_t adc_reading) {
+    static uint8_t bent = 0;
+    if (bent) {
+        if (adc_reading <= UNBENT_THRESHOLD) {
+            bent = 0;
+        }
+    } else {
+        if (adc_reading >= BENT_THRESHOLD) {
+            bent = 1;
+        }
+    }
+    return bent;
+}
+
+static void adc_init()
+{
+    esp_adc_cal_characteristics_t *adc_chars;
+    if (ADC_UNIT == ADC_UNIT_1) {
+        adc1_config_width(ADC_WIDTH_12Bit);
+        adc1_config_channel_atten(ADC_CHANNEL, ADC_ATTEN);
+    } else {
+        adc2_config_channel_atten(ADC_CHANNEL, ADC_ATTEN);
+    }
+
+    adc_chars = calloc(1, sizeof(esp_adc_cal_characteristics_t));
+    /*esp_adc_cal_value_t val_type = */esp_adc_cal_characterize(ADC_UNIT, ADC_ATTEN, ADC_WIDTH_BIT_12, DEFAULT_VREF, adc_chars);
+}
+
+static uint32_t sample_adc() {
+    uint32_t adc_reading = 0;
+    //Multisampling
+    for (int i = 0; i < NO_OF_SAMPLES; i++) {
+        if (ADC_UNIT == ADC_UNIT_1) {
+            adc_reading += adc1_get_raw((adc1_channel_t) ADC_CHANNEL);
+        } else {
+            int raw;
+            adc2_get_raw((adc2_channel_t) ADC_CHANNEL, ADC_WIDTH_BIT_12, &raw);
+            adc_reading += raw;
+        }
+    }
+    adc_reading /= NO_OF_SAMPLES;
+    return adc_reading;
+}
+
+
 void camera_task(void* spp_handle)
 {
     uint8_t buf[16];
@@ -149,6 +206,12 @@ void camera_task(void* spp_handle)
         printf("\n");
         camera_data_proc(buf, pos);
         printf("X: %d\tY: %d\n", pos[0], pos[1]);
+        
+        uint8_t bent = get_bent(sample_adc());
+        buf[0] = bent;
+        if (bent) printf("Got bent\n");
+        else printf("Did not get bent\n");
+
         esp_spp_write((uint32_t)spp_handle, 4, buf);
         vTaskDelay(500 / portTICK_RATE_MS);
     }
@@ -264,6 +327,8 @@ void app_main()
     ESP_ERROR_CHECK(i2c_master_init());
     printf("Initializing camera...\n");
     ESP_ERROR_CHECK(camera_init());
+    printf("Initializing ADC %d\n", ADC_UNIT);
+    adc_init();
 
     //xTaskCreate(camera_task, "camera_task", 1024 * 2, NULL, 10, NULL);
 
