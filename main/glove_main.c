@@ -44,6 +44,9 @@
 #define BENT_THRESHOLD 4095
 #define UNBENT_THRESHOLD 3000
 
+#define SCALE_X (640.f / 1024.f)
+#define SCALE_Y (480.f / 768.f)
+
 static const esp_spp_mode_t esp_spp_mode = ESP_SPP_MODE_CB;
 
 static const esp_spp_sec_t sec_mask = ESP_SPP_SEC_AUTHENTICATE;
@@ -196,24 +199,43 @@ static uint32_t sample_adc() {
 
 void measure_task(void* spp_handle)
 {
-    uint8_t buf[16];
+    uint8_t buf[4];
     int pos[2];
     for (;;) {
+        // Read from the camera
         ESP_LOGI(GLOVE_TAG, "Reading from camera...\n");
         ESP_ERROR_CHECK(camera_read(buf));
         for (unsigned i = 0; i < 16; ++i) {
-            ESP_LOGI(GLOVE_TAG, "%x", buf[i]);
+            //ESP_LOGI(GLOVE_TAG, "%x", buf[i]);
         }
         camera_data_proc(buf, pos);
         ESP_LOGI(GLOVE_TAG, "X: %d\tY: %d\n", pos[0], pos[1]);
         
+        // Get state of flex sensor
         uint8_t bent = get_bent(sample_adc());
         buf[0] = bent;
+        
+        // Scale the aspect ratio of the camera
+        pos[0] *= SCALE_X;
+        pos[1] *= SCALE_Y;
+        ESP_LOGI(GLOVE_TAG, "Scaled X: %d\tScaled Y: %d\n", pos[0], pos[1]);
+
+        // Draw = true, Erase = false
+        buf[3] = 1;
+        // x-position
+        buf[2] = (pos[0] & 0x3F) << 2;
+        buf[1] = (pos[0] & 0x3C0) >> 6;
+        // y-position
+        buf[1] |= (pos[1] & 0xF) << 4;
+        buf[0] = (pos[1] & 0x3F0) >> 4;
+        // x- and y-movement = true
+        buf[0] |= 0xC0;
+
         if (bent) ESP_LOGI(GLOVE_TAG, "Got bent\n");
         else ESP_LOGI(GLOVE_TAG, "Did not get bent\n");
 
         esp_spp_write((uint32_t)spp_handle, 4, buf);
-        vTaskDelay(500 / portTICK_RATE_MS);
+        vTaskDelay(20 / portTICK_RATE_MS);
     }
 }
 
