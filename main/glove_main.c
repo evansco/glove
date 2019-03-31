@@ -217,7 +217,7 @@ void measure_task(void* spp_handle)
         
         // Scale the aspect ratio of the camera
         pos[0] *= SCALE_X;
-        pos[1] *= SCALE_Y;
+        pos[1] = (768 - pos[1]) * SCALE_Y;
         ESP_LOGI(GLOVE_TAG, "Scaled X: %d\tScaled Y: %d\n", pos[0], pos[1]);
 
         // Draw = true, Erase = false
