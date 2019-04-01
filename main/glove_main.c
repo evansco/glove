@@ -17,6 +17,7 @@
 #include "driver/gpio.h"
 #include "driver/adc.h"
 #include "esp_adc_cal.h"
+#include <math.h>
 
 #define GLOVE_TAG "GLOVE"
 #define SPP_TAG "SPP_INITIATOR_DEMO"
@@ -69,6 +70,57 @@ uint8_t camera_init_vals[CAMERA_INIT_NUM_CMDS][CAMERA_INIT_CMD_LEN] = {
 };
 
 TaskHandle_t ct_handle;
+
+#define THRESHOLD 100
+
+bool is_valid(int x, int y) {
+    static int x_prev = 0x3FF;
+    static int y_prev = 0x3FF;
+    static int dist = 0x3FF * 0x3FF;
+    static int nrejected = 0;
+
+    if (x == 0x3FF || y == 0x3FF) {
+        x_prev = 0x3FF;
+        y_prev = 0x3FF;
+        dist = 0x3FF;
+        nrejected = 0;
+        return false;
+    }
+    if (x_prev == 0x3FF && y_prev == 0x3FF) {
+        x_prev = x;
+        y_prev = y;
+        return true;
+    } else if (dist == 0x3FF * 0x3FF) {
+        int dx = x - x_prev;
+        int dy = y - y_prev;
+        dist = (dx * dx) + (dy * dy);
+        return true;
+    }
+
+    int dx = x - x_prev;
+    int dy = y - y_prev;
+    int d = (dx * dx) + (dy * dy);
+
+    if (nrejected == 4) {
+        x_prev = x;
+        y_prev = y;
+        dist = d;
+        return true;
+    }
+
+    if ((dist > d) && (dist - d > THRESHOLD)) {
+        ++nrejected;
+        return false;
+    } else if (d - dist > THRESHOLD) {
+        ++nrejected;
+        return false;
+    } else {
+        x_prev = x;
+        y_prev = y;
+        dist = d;
+        return true;
+    }
+}
 
 /*
  * I2C initialization
@@ -215,6 +267,11 @@ void measure_task(void* spp_handle)
         uint8_t bent = get_bent(sample_adc());
         buf[0] = bent;
         
+        if (!is_valid(pos[0], pos[1])) {
+            ESP_LOGW(GLOVE_TAG, "Point (%d, %d) detected as outlier. Thrown away.", pos[0], pos[1]);
+            continue;
+        }
+
         // Scale the aspect ratio of the camera
         pos[0] *= SCALE_X;
         pos[1] = (768 - pos[1]) * SCALE_Y;
@@ -235,7 +292,7 @@ void measure_task(void* spp_handle)
         else ESP_LOGI(GLOVE_TAG, "Did not get bent\n");
 
         esp_spp_write((uint32_t)spp_handle, 4, buf);
-        vTaskDelay(20 / portTICK_RATE_MS);
+        vTaskDelay(10 / portTICK_RATE_MS);
     }
 }
 
