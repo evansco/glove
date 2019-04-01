@@ -56,7 +56,7 @@ static esp_bd_addr_t peer_bd_addr;
 static const char remote_device_name[] = "HC-06";
 static const esp_bd_addr_t remote_device_addr = {0x98, 0xd3, 0x31, 0xfb, 0x3c, 0x13};
 static const esp_bt_inq_mode_t inq_mode = ESP_BT_INQ_MODE_GENERAL_INQUIRY;
-static const uint8_t inq_len = 30;
+static const uint8_t inq_len = 0x30;
 static const uint8_t inq_num_rsps = 0;
 
 uint8_t camera_init_vals[CAMERA_INIT_NUM_CMDS][CAMERA_INIT_CMD_LEN] = {
