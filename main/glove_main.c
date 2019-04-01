@@ -40,10 +40,14 @@
 #define DEFAULT_VREF 3300 // 3.3V
 #define NO_OF_SAMPLES 64
 #define ADC_UNIT ADC_UNIT_1
-#define ADC_CHANNEL ADC_CHANNEL_6 // ADC1: GPIO34, ADC2: GPIO14
-#define ADC_ATTEN ADC_ATTEN_DB_0 // None
-#define BENT_THRESHOLD 4095
-#define UNBENT_THRESHOLD 3000
+#define FLEX1_CHANNEL ADC_CHANNEL_6 // ADC1: GPIO34, ADC2: GPIO14
+#define FLEX2_CHANNEL ADC_CHANNEL_7 // ADC1: GPIO35, ADC2: GPIO27
+#define FLEX1_ATTEN ADC_ATTEN_DB_0 // None
+#define FLEX2_ATTEN ADC_ATTEN_DB_6 // 1/2
+#define FLEX1_BENT_THRESHOLD 4095
+#define FLEX1_UNBENT_THRESHOLD 3000
+#define FLEX2_BENT_THRESHOLD 3400
+#define FLEX2_UNBENT_THRESHOLD 2500
 
 #define SCALE_X (640.f / 1024.f)
 #define SCALE_Y (480.f / 768.f)
@@ -204,43 +208,60 @@ static esp_err_t camera_data_proc(uint8_t* data, int* pos)
     return ESP_OK;
 }
 
-uint8_t get_bent(uint32_t adc_reading) {
-    static uint8_t bent = 0;
-    if (bent) {
-        if (adc_reading <= UNBENT_THRESHOLD) {
-            bent = 0;
+uint8_t get_bent(adc_channel_t channel, uint32_t adc_reading) {
+    static uint8_t bent_draw = 0;
+    static uint8_t bent_erase = 0;
+    
+    if (channel == FLEX1_CHANNEL) {
+        if (bent_draw) {
+            if (adc_reading <= FLEX1_UNBENT_THRESHOLD) {
+                bent_draw = 0;
+            }
+        } else {
+            if (adc_reading >= FLEX1_BENT_THRESHOLD) {
+                bent_draw = 1;
+            }
         }
+        return bent_draw;
     } else {
-        if (adc_reading >= BENT_THRESHOLD) {
-            bent = 1;
+        if (bent_erase) {
+            if (adc_reading <= FLEX2_UNBENT_THRESHOLD) {
+                bent_erase = 0;
+            }
+        } else {
+            if (adc_reading >= FLEX2_BENT_THRESHOLD) {
+                bent_erase = 1;
+            }
         }
+        return bent_erase;
     }
-    return bent;
 }
 
 static void adc_init()
 {
-    esp_adc_cal_characteristics_t *adc_chars;
+    //esp_adc_cal_characteristics_t *adc_chars;
     if (ADC_UNIT == ADC_UNIT_1) {
         adc1_config_width(ADC_WIDTH_12Bit);
-        adc1_config_channel_atten(ADC_CHANNEL, ADC_ATTEN);
+        adc1_config_channel_atten(FLEX1_CHANNEL, FLEX1_ATTEN);
+        adc1_config_channel_atten(FLEX2_CHANNEL, FLEX2_ATTEN);
     } else {
-        adc2_config_channel_atten(ADC_CHANNEL, ADC_ATTEN);
+        adc2_config_channel_atten(FLEX1_CHANNEL, FLEX1_ATTEN);
+        adc2_config_channel_atten(FLEX2_CHANNEL, FLEX2_ATTEN);
     }
 
-    adc_chars = calloc(1, sizeof(esp_adc_cal_characteristics_t));
-    /*esp_adc_cal_value_t val_type = */esp_adc_cal_characterize(ADC_UNIT, ADC_ATTEN, ADC_WIDTH_BIT_12, DEFAULT_VREF, adc_chars);
+    //adc_chars = calloc(1, sizeof(esp_adc_cal_characteristics_t));
+    /*esp_adc_cal_value_t val_type = *///esp_adc_cal_characterize(ADC_UNIT, ADC_ATTEN, ADC_WIDTH_BIT_12, DEFAULT_VREF, adc_chars);
 }
 
-static uint32_t sample_adc() {
+static uint32_t sample_adc(adc_channel_t channel) {
     uint32_t adc_reading = 0;
     //Multisampling
     for (int i = 0; i < NO_OF_SAMPLES; i++) {
         if (ADC_UNIT == ADC_UNIT_1) {
-            adc_reading += adc1_get_raw((adc1_channel_t) ADC_CHANNEL);
+            adc_reading += adc1_get_raw((adc1_channel_t) channel);
         } else {
             int raw;
-            adc2_get_raw((adc2_channel_t) ADC_CHANNEL, ADC_WIDTH_BIT_12, &raw);
+            adc2_get_raw((adc2_channel_t) channel, ADC_WIDTH_BIT_12, &raw);
             adc_reading += raw;
         }
     }
@@ -263,9 +284,14 @@ void measure_task(void* spp_handle)
         camera_data_proc(buf, pos);
         ESP_LOGI(GLOVE_TAG, "X: %d\tY: %d\n", pos[0], pos[1]);
         
-        // Get state of flex sensor
-        uint8_t bent = get_bent(sample_adc());
-        buf[0] = bent;
+        // Get state of flex sensors
+        uint8_t bent_draw = get_bent(FLEX1_CHANNEL, sample_adc(FLEX1_CHANNEL));
+        uint8_t bent_erase = get_bent(FLEX2_CHANNEL, sample_adc(FLEX2_CHANNEL));
+        if (bent_draw && bent_erase) {
+            buf[0] = 0;
+        } else {
+            buf[0] = bent_draw || (bent_erase << 1);
+        }
         
         if (!is_valid(pos[0], pos[1])) {
             ESP_LOGW(GLOVE_TAG, "Point (%d, %d) detected as outlier. Thrown away.", pos[0], pos[1]);
@@ -288,8 +314,10 @@ void measure_task(void* spp_handle)
         // x- and y-movement = true
         buf[0] |= 0xC0;
 
-        if (bent) ESP_LOGI(GLOVE_TAG, "Got bent\n");
-        else ESP_LOGI(GLOVE_TAG, "Did not get bent\n");
+        if (bent_draw) ESP_LOGI(GLOVE_TAG, "Draw got bent\n");
+        else ESP_LOGI(GLOVE_TAG, "Draw did not get bent\n");
+        if (bent_erase) ESP_LOGI(GLOVE_TAG, "Erase got bent\n");
+        else ESP_LOGI(GLOVE_TAG, "Erase did not get bent\n");
 
         esp_spp_write((uint32_t)spp_handle, 4, buf);
         vTaskDelay(10 / portTICK_RATE_MS);
