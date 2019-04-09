@@ -126,6 +126,83 @@ bool is_valid(int x, int y) {
     }
 }
 
+#define MEDIAN_FILTER_SIZE 5
+
+typedef struct {
+    int x;
+    int y;
+    int dist;
+} point_t;
+
+point_t* get_median(point_t** points, int size) {
+    // Copy the array of point pointers
+    point_t* arr[size];
+    for (int i = 0; i < size; ++i) {
+        arr[i] = points[i];
+    }
+
+    // Insertion sort
+    int i, j; 
+    point_t* key;
+    for (i = 1; i < size; i++) { 
+        key = arr[i]; 
+        j = i - 1; 
+  
+        /* Move elements of arr[0..i-1], that are 
+          greater than key, to one position ahead 
+          of their current position */
+        while (j >= 0 && arr[j]->dist > key->dist) { 
+            arr[j + 1] = arr[j]; 
+            j = j - 1; 
+        } 
+        arr[j + 1] = key; 
+    }
+
+    return arr[(size - 1) / 2];
+}
+
+point_t* median_filter(int x, int y) {
+    static point_t* points[MEDIAN_FILTER_SIZE];
+    static int size = 0;
+    static int x_prev = 0x3FF;
+    static int y_prev = 0x3FF;
+
+    // Check if point is valid, if not return NULL
+    if (x == 0x3FF || y == 0x3FF) {
+        x_prev = 0x3FF;
+        y_prev = 0x3FF;
+        return NULL;
+    }
+
+    // Calculate the distance to the new point
+    point_t* new_point = (point_t*)malloc(sizeof(point_t));
+    if (size == 0) {
+        x_prev = x;
+        y_prev = y;
+    }
+    int dx = x - x_prev;
+    int dy = y - y_prev;
+    new_point->dist = (dx * dx) + (dy * dy);
+
+    // If size < 3, just push in the new point
+    if (size < MEDIAN_FILTER_SIZE) {
+        points[size++] = new_point;
+        if (size < 3) {
+            return new_point;
+        } else {
+            return get_median(points, size);
+        }
+    }
+    
+    free(points[0]);
+    for (int i = 0; i < MEDIAN_FILTER_SIZE - 1; ++i) {
+        points[i] = points[i + 1];
+    }
+    points[MEDIAN_FILTER_SIZE - 1] = new_point;
+
+    return get_median(points, size);
+}
+
 /*
  * I2C initialization
  */
@@ -288,9 +365,9 @@ void measure_task(void* spp_handle)
         uint8_t bent_draw = get_bent(FLEX1_CHANNEL, sample_adc(FLEX1_CHANNEL));
         uint8_t bent_erase = get_bent(FLEX2_CHANNEL, sample_adc(FLEX2_CHANNEL));
         if (bent_draw && bent_erase) {
-            buf[0] = 0;
+            buf[3] = 0;
         } else {
-            buf[0] = bent_draw || (bent_erase << 1);
+            buf[3] = bent_draw | (bent_erase << 1);
         }
         
         if (!is_valid(pos[0], pos[1])) {
@@ -304,7 +381,7 @@ void measure_task(void* spp_handle)
         ESP_LOGI(GLOVE_TAG, "Scaled X: %d\tScaled Y: %d\n", pos[0], pos[1]);
 
         // Draw = true, Erase = false
-        buf[3] = 1;
+        //buf[3] = 1;
         // x-position
         buf[2] = (pos[0] & 0x3F) << 2;
         buf[1] = (pos[0] & 0x3C0) >> 6;
