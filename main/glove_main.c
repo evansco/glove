@@ -126,7 +126,7 @@ bool is_valid(int x, int y) {
     }
 }
 
-#define MEDIAN_FILTER_SIZE 5
+#define MEDIAN_FILTER_SIZE 3
 
 typedef struct {
     int x;
@@ -183,6 +183,8 @@ point_t* median_filter(int x, int y) {
     int dx = x - x_prev;
     int dy = y - y_prev;
     new_point->dist = (dx * dx) + (dy * dy);
+    new_point->x = x;
+    new_point->y = y;
 
     // If size < 3, just push in the new point
     if (size < MEDIAN_FILTER_SIZE) {
@@ -370,10 +372,16 @@ void measure_task(void* spp_handle)
             buf[3] = bent_draw | (bent_erase << 1);
         }
         
-        if (!is_valid(pos[0], pos[1])) {
+        /*if (!is_valid(pos[0], pos[1])) {
             ESP_LOGW(GLOVE_TAG, "Point (%d, %d) detected as outlier. Thrown away.", pos[0], pos[1]);
             continue;
+        }*/
+        point_t* point = median_filter(pos[0], pos[1]);
+        if (!point) {
+            continue;
         }
+        pos[0] = point->x;
+        pos[1] = point->y;
 
         // Scale the aspect ratio of the camera
         pos[0] *= SCALE_X;
