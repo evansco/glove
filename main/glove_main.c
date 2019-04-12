@@ -36,6 +36,16 @@
 #define CAMERA_INIT_CMD_LEN 2
 #define CAMERA_INIT_NUM_CMDS 6
 
+// IMU Stuff
+#define CTRL_REG1_G 0x10
+#define CTRL_REG2_G 0x11
+#define CTRL_REG3_G 0x12
+#define CTRL_REG4 0x1e
+#define ORIENT_CFG_G 0x13
+#define IMU_AG_ADDR 0x6B // Address of gyro and accel
+#define IMU_GYRO_START 0x18
+#define IMU_ACCEL_START 0x28
+
 // ADC
 #define DEFAULT_VREF 3300 // 3.3V
 #define NO_OF_SAMPLES 64
@@ -76,6 +86,159 @@ uint8_t camera_init_vals[CAMERA_INIT_NUM_CMDS][CAMERA_INIT_CMD_LEN] = {
 TaskHandle_t ct_handle;
 
 #define THRESHOLD 100
+
+typedef struct {
+    int16_t gyro[3];
+    int16_t accel[3];
+} imu_t;
+
+uint8_t imu_who_am_i() {
+    uint8_t whoami;
+    int ret;
+    i2c_cmd_handle_t cmd = i2c_cmd_link_create();
+    i2c_master_start(cmd);
+    i2c_master_write_byte(cmd, IMU_AG_ADDR << 1 | I2C_MASTER_WRITE, ACK_CHECK_EN);
+    i2c_master_write_byte(cmd, 0xF, ACK_CHECK_EN);
+    i2c_master_start(cmd);
+    i2c_master_write_byte(cmd, IMU_AG_ADDR << 1 | I2C_MASTER_READ, ACK_CHECK_EN);
+    i2c_master_read_byte(cmd, &whoami, NACK_VAL);
+    i2c_master_stop(cmd);
+    ret = i2c_master_cmd_begin(I2C_MASTER_NUM, cmd, 1000 / portTICK_RATE_MS);
+    i2c_cmd_link_delete(cmd);
+    if (ret != ESP_OK)
+        ESP_LOGW(GLOVE_TAG, "FAIL1");
+    ESP_LOGI(GLOVE_TAG, "Who am I: %d\n", whoami);
+    return whoami;
+}
+
+int imu_write_byte(uint8_t addr, uint8_t subaddr, uint8_t data) {
+    int ret;
+    i2c_cmd_handle_t cmd = i2c_cmd_link_create();
+    i2c_master_start(cmd);
+    i2c_master_write_byte(cmd, addr << 1 | I2C_MASTER_WRITE, ACK_CHECK_EN);
+    i2c_master_write_byte(cmd, subaddr, ACK_CHECK_EN);
+    i2c_master_write_byte(cmd, data, ACK_CHECK_EN);
+    i2c_master_stop(cmd);
+    ret = i2c_master_cmd_begin(I2C_MASTER_NUM, cmd, 1000 / portTICK_RATE_MS);
+    i2c_cmd_link_delete(cmd);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+    return ESP_OK;
+}
+
+int init_imu() {
+    int ret;
+    int reg = (0x7 << 5) | 0x3;
+    ret = imu_write_byte(IMU_AG_ADDR, CTRL_REG1_G, reg);
+    if (ret != ESP_OK) {
+        ESP_LOGW(GLOVE_TAG, "Failed gyro init\n");
+        return ret;
+    }
+
+    reg = 0;
+    ret = imu_write_byte(IMU_AG_ADDR, CTRL_REG2_G, reg);
+    if (ret != ESP_OK) {
+        ESP_LOGW(GLOVE_TAG, "Failed gyro init\n");
+        return ret;
+    }
+
+    reg = 0;
+    ret = imu_write_byte(IMU_AG_ADDR, CTRL_REG3_G, reg);
+    if (ret != ESP_OK) {
+        ESP_LOGW(GLOVE_TAG, "Failed gyro init\n");
+        return ret;
+    }
+
+    reg = 7 << 3;
+    ret = imu_write_byte(IMU_AG_ADDR, CTRL_REG4, reg);
+    if (ret != ESP_OK) {
+        ESP_LOGW(GLOVE_TAG, "Failed gyro init\n");
+        return ret;
+    }
+
+    reg = 0;
+    ret = imu_write_byte(IMU_AG_ADDR, ORIENT_CFG_G, reg);
+    if (ret != ESP_OK) {
+        ESP_LOGW(GLOVE_TAG, "Failed gyro init\n");
+        return ret;
+    }
+
+    imu_who_am_i();
+    vTaskDelay(100 / portTICK_RATE_MS);
+
+    return ret;
+    
+}
+
+uint8_t imu_sensor_avail() {
+    int ret;
+    uint8_t status;
+    i2c_cmd_handle_t cmd = i2c_cmd_link_create();
+    i2c_master_start(cmd);
+    i2c_master_write_byte(cmd, IMU_AG_ADDR << 1 | I2C_MASTER_WRITE, ACK_CHECK_EN);
+    i2c_master_write_byte(cmd, 0x17, ACK_CHECK_EN);
+    i2c_master_start(cmd);
+    i2c_master_write_byte(cmd, IMU_AG_ADDR << 1 | I2C_MASTER_READ, ACK_CHECK_EN);
+    i2c_master_read_byte(cmd, &status, NACK_VAL);
+    i2c_master_stop(cmd);
+    ret = i2c_master_cmd_begin(I2C_MASTER_NUM, cmd, 1000 / portTICK_RATE_MS);
+    i2c_cmd_link_delete(cmd);
+    if (ret != ESP_OK)
+        ESP_LOGW(GLOVE_TAG, "STATFAIL2");
+    return status & 11;
+}
+
+int imu_read_sensor(uint8_t saddr, int16_t* buffer) {
+    int ret;
+    uint8_t last_byte;
+
+    i2c_cmd_handle_t cmd = i2c_cmd_link_create();
+    i2c_master_start(cmd);
+    i2c_master_write_byte(cmd, IMU_AG_ADDR << 1 | I2C_MASTER_WRITE, ACK_CHECK_EN);
+    i2c_master_write_byte(cmd, saddr | 0x80, ACK_CHECK_EN);
+    i2c_master_start(cmd);
+    i2c_master_write_byte(cmd, IMU_AG_ADDR << 1 | I2C_MASTER_READ, ACK_CHECK_EN);
+    i2c_master_read(cmd, (uint8_t*) buffer, 5, ACK_VAL);
+    i2c_master_read_byte(cmd, &last_byte, NACK_VAL);
+    i2c_master_stop(cmd);
+    ret = i2c_master_cmd_begin(I2C_MASTER_NUM, cmd, 1000 / portTICK_RATE_MS);
+    i2c_cmd_link_delete(cmd);
+    buffer[2] |= last_byte << 8;
+    if (ret != ESP_OK)
+        ESP_LOGW(GLOVE_TAG, "FAIL2");
+    return ret;
+}
+
+imu_t* read_imu() {
+    int ret = ESP_OK;
+    imu_t* imu = (imu_t*) malloc(sizeof(imu_t));
+    uint8_t avail = imu_sensor_avail(); 
+    if (avail & 1) {
+        ret = imu_read_sensor(IMU_ACCEL_START, imu->accel);
+        if (ret != ESP_OK) {
+            free(imu);
+            ESP_LOGW(GLOVE_TAG, "Failed to read accel data\n");
+            return NULL;
+        }
+    } else {
+        ESP_LOGW(GLOVE_TAG, "Accel data unavailable\n");
+    }
+
+
+    if (avail & 2) {
+        ret = imu_read_sensor(IMU_GYRO_START, imu->gyro);
+        if (ret != ESP_OK) {
+            free(imu);
+            ESP_LOGW(GLOVE_TAG, "Failed to read gyro data\n");
+            return NULL;
+        }
+    } else {
+        ESP_LOGW(GLOVE_TAG, "Gyro data unavailable\n");
+    }
+
+    return imu;
+}
 
 bool is_valid(int x, int y) {
     static int x_prev = 0x3FF;
@@ -372,6 +535,16 @@ void measure_task(void* spp_handle)
             buf[3] = bent_draw | (bent_erase << 1);
         }
         
+        imu_t* imu = read_imu();
+        if (!imu) {
+            ESP_LOGW(GLOVE_TAG, "Spaghett");
+            continue;
+        }
+        ESP_LOGI(GLOVE_TAG, "accel: (%d, %d, %d)\n", imu->accel[0], imu->accel[1], imu->accel[2]);
+        ESP_LOGI(GLOVE_TAG, "gyro: (%d, %d, %d)\n", imu->gyro[0], imu->gyro[1], imu->gyro[2]);
+        free(imu);
+        continue;
+
         /*if (!is_valid(pos[0], pos[1])) {
             ESP_LOGW(GLOVE_TAG, "Point (%d, %d) detected as outlier. Thrown away.", pos[0], pos[1]);
             continue;
@@ -523,6 +696,8 @@ void app_main()
     ESP_ERROR_CHECK(camera_init());
     ESP_LOGI(GLOVE_TAG, "Initializing ADC %d\n", ADC_UNIT);
     adc_init();
+    ESP_LOGI(GLOVE_TAG, "Initializing IMU...\n");
+    init_imu();
 
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
