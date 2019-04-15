@@ -23,10 +23,11 @@ def plot_2d_data(filename):
     plt.legend()
     plt.show()
 
-def plot_3d_data(filename):
+def plot_3d_data(filename, integrate):
     x = []
     y = []
     z = []
+    Sum = [0]
 
     with open(filename) as f:
         content = f.readlines()
@@ -38,6 +39,7 @@ def plot_3d_data(filename):
         print(points)
 
         x.append(points[0])
+        Sum.append(Sum[-1] + points[0])
         y.append(points[1])
         z.append(points[2])
 
@@ -47,8 +49,13 @@ def plot_3d_data(filename):
     plt.plot(z, label='z')
     plt.title(filename.split('.')[0])
     plt.legend()
+
+    if integrate == True:
+        plt.figure()
+        plt.plot(Sum, label='Sum')
+        plt.title('Roll')
     plt.show()
 
-plot_3d_data('gyro.dat')
-plot_3d_data('accel.dat')
+plot_3d_data('gyro.dat', True)
+plot_3d_data('accel.dat', False)
 plot_2d_data('pos.dat')

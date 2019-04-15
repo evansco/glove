@@ -511,25 +511,15 @@ static uint32_t sample_adc(adc_channel_t channel) {
     return adc_reading;
 }
 
-int update_roll(int16_t gx) {
-    static int roll = 0;
-    if (abs(gx) > 500) {
-        roll += gx;
-    }
-    ESP_LOGI(GLOVE_TAG, "GX: %d", gx);
-    ESP_LOGI(GLOVE_TAG, "Roll: %d", roll);
-    return roll;
-}
-
-uint8_t get_color_select(int roll) {
+uint8_t get_color_select(int16_t gx) {
     static uint8_t color_state = 0;
     static bool pressed = false;
-    static const int PRESS_THRESHOLD = 200000;
-    static const int RELEASE_THRESHOLD = 100000;
-    if (!pressed && abs(roll) > PRESS_THRESHOLD) {
+    static const int PRESS_THRESHOLD = -30000;
+    static const int RELEASE_THRESHOLD = 20000;
+    if (!pressed && gx < PRESS_THRESHOLD) {
         pressed = true;
         color_state = !color_state;
-    } else if (pressed && abs(roll) < RELEASE_THRESHOLD) {
+    } else if (pressed && gx > RELEASE_THRESHOLD) {
         pressed = false;
     }
     ESP_LOGI(GLOVE_TAG, "Color select: %d", color_state);
@@ -568,8 +558,7 @@ void measure_task(void* spp_handle)
         ESP_LOGI(GLOVE_TAG, "gyro: (%d, %d, %d)\n", imu->gyro[0], imu->gyro[1], imu->gyro[2]);
         //continue;
         
-        int roll = update_roll(imu->gyro[0]);
-        uint8_t color_select = get_color_select(roll);
+        uint8_t color_select = get_color_select(imu->gyro[0]);
 
         if (!is_valid(pos[0], pos[1])) {
             ESP_LOGW(GLOVE_TAG, "Point (%d, %d) detected as outlier. Thrown away.", pos[0], pos[1]);
@@ -583,7 +572,7 @@ void measure_task(void* spp_handle)
         ESP_LOGI(GLOVE_TAG, "Scaled X: %d\tScaled Y: %d\n", pos[0], pos[1]);
 
         // Draw, erase, and color select
-        //buf[3] |= get_color_select(roll);
+        //buf[3] |= color_select;
         // TODO: Remove
         buf[3] = 1 | color_select;
         // x-position
