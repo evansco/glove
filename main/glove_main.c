@@ -18,6 +18,7 @@
 #include "driver/adc.h"
 #include "esp_adc_cal.h"
 #include <math.h>
+#include <float.h>
 
 #define GLOVE_TAG "GLOVE"
 #define SPP_TAG "SPP_INITIATOR_DEMO"
@@ -136,6 +137,7 @@ int init_imu() {
         return ret;
     }
 
+    //reg = 0b00000010;
     reg = 0;
     ret = imu_write_byte(IMU_AG_ADDR, CTRL_REG2_G, reg);
     if (ret != ESP_OK) {
@@ -143,6 +145,7 @@ int init_imu() {
         return ret;
     }
 
+    //reg = 0b01000001;
     reg = 0;
     ret = imu_write_byte(IMU_AG_ADDR, CTRL_REG3_G, reg);
     if (ret != ESP_OK) {
@@ -243,49 +246,39 @@ imu_t* read_imu() {
 bool is_valid(int x, int y) {
     static int x_prev = 0x3FF;
     static int y_prev = 0x3FF;
-    static int dist = 0x3FF * 0x3FF;
-    static int nrejected = 0;
-
-    if (x == 0x3FF || y == 0x3FF) {
-        x_prev = 0x3FF;
-        y_prev = 0x3FF;
-        dist = 0x3FF;
-        nrejected = 0;
+    static float theta_prev = FLT_MAX;
+    
+    if (y == 0x3FF) {
         return false;
     }
-    if (x_prev == 0x3FF && y_prev == 0x3FF) {
+
+    if (y_prev == 0x3FF) {
         x_prev = x;
         y_prev = y;
-        return true;
-    } else if (dist == 0x3FF * 0x3FF) {
-        int dx = x - x_prev;
-        int dy = y - y_prev;
-        dist = (dx * dx) + (dy * dy);
-        return true;
+        return false;
     }
 
-    int dx = x - x_prev;
-    int dy = y - y_prev;
-    int d = (dx * dx) + (dy * dy);
+    int dx = abs(x - x_prev);
+    int dy = abs(y - y_prev);
+    float theta = atan2(dy, dx);
 
-    if (nrejected == 4) {
+    if (theta_prev == FLT_MAX) {
         x_prev = x;
         y_prev = y;
-        dist = d;
-        return true;
+        theta_prev = theta;
+        return false;
     }
 
-    if ((dist > d) && (dist - d > THRESHOLD)) {
-        ++nrejected;
-        return false;
-    } else if (d - dist > THRESHOLD) {
-        ++nrejected;
-        return false;
+    if (dx < 200 && dy < 200
+            && (theta - theta_prev) < 0.5) {
+        x_prev = x;
+        y_prev = y;
+        theta_prev = theta;
+        return true;
     } else {
-        x_prev = x;
-        y_prev = y;
-        dist = d;
-        return true;
+        y_prev = 0x3FF;
+        theta_prev = FLT_MAX;
+        return false;
     }
 }
 
@@ -511,7 +504,6 @@ static uint32_t sample_adc(adc_channel_t channel) {
     return adc_reading;
 }
 
-
 void measure_task(void* spp_handle)
 {
     uint8_t buf[4];
@@ -524,7 +516,7 @@ void measure_task(void* spp_handle)
             //ESP_LOGI(GLOVE_TAG, "%x", buf[i]);
         }
         camera_data_proc(buf, pos);
-        ESP_LOGI(GLOVE_TAG, "X: %d\tY: %d\n", pos[0], pos[1]);
+        //ESP_LOGI(GLOVE_TAG, "X: %d\tY: %d\n", pos[0], pos[1]);
         
         // Get state of flex sensors
         uint8_t bent_draw = get_bent(FLEX1_CHANNEL, sample_adc(FLEX1_CHANNEL));
@@ -543,18 +535,19 @@ void measure_task(void* spp_handle)
         ESP_LOGI(GLOVE_TAG, "accel: (%d, %d, %d)\n", imu->accel[0], imu->accel[1], imu->accel[2]);
         ESP_LOGI(GLOVE_TAG, "gyro: (%d, %d, %d)\n", imu->gyro[0], imu->gyro[1], imu->gyro[2]);
         free(imu);
-        continue;
+        //continue;
 
-        /*if (!is_valid(pos[0], pos[1])) {
+        if (!is_valid(pos[0], pos[1])) {
             ESP_LOGW(GLOVE_TAG, "Point (%d, %d) detected as outlier. Thrown away.", pos[0], pos[1]);
             continue;
-        }*/
-        point_t* point = median_filter(pos[0], pos[1]);
+        }
+        ESP_LOGI(GLOVE_TAG, "X: %d\tY: %d\n", pos[0], pos[1]);
+        /*point_t* point = median_filter(pos[0], pos[1]);
         if (!point) {
             continue;
         }
         pos[0] = point->x;
-        pos[1] = point->y;
+        pos[1] = point->y;*/
 
         // Scale the aspect ratio of the camera
         pos[0] *= SCALE_X;
@@ -562,7 +555,7 @@ void measure_task(void* spp_handle)
         ESP_LOGI(GLOVE_TAG, "Scaled X: %d\tScaled Y: %d\n", pos[0], pos[1]);
 
         // Draw = true, Erase = false
-        //buf[3] = 1;
+        buf[3] = 1;
         // x-position
         buf[2] = (pos[0] & 0x3F) << 2;
         buf[1] = (pos[0] & 0x3C0) >> 6;
