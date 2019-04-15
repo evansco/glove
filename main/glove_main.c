@@ -511,6 +511,31 @@ static uint32_t sample_adc(adc_channel_t channel) {
     return adc_reading;
 }
 
+int update_roll(int16_t gx) {
+    static int roll = 0;
+    if (abs(gx) > 500) {
+        roll += gx;
+    }
+    ESP_LOGI(GLOVE_TAG, "GX: %d", gx);
+    ESP_LOGI(GLOVE_TAG, "Roll: %d", roll);
+    return roll;
+}
+
+uint8_t get_color_select(int roll) {
+    static uint8_t color_state = 0;
+    static bool pressed = false;
+    static const int PRESS_THRESHOLD = 200000;
+    static const int RELEASE_THRESHOLD = 100000;
+    if (!pressed && abs(roll) > PRESS_THRESHOLD) {
+        pressed = true;
+        color_state = !color_state;
+    } else if (pressed && abs(roll) < RELEASE_THRESHOLD) {
+        pressed = false;
+    }
+    ESP_LOGI(GLOVE_TAG, "Color select: %d", color_state);
+    return color_state << 2;
+}
+
 void measure_task(void* spp_handle)
 {
     uint8_t buf[4];
@@ -541,28 +566,26 @@ void measure_task(void* spp_handle)
         }
         ESP_LOGI(GLOVE_TAG, "accel: (%d, %d, %d)\n", imu->accel[0], imu->accel[1], imu->accel[2]);
         ESP_LOGI(GLOVE_TAG, "gyro: (%d, %d, %d)\n", imu->gyro[0], imu->gyro[1], imu->gyro[2]);
-        free(imu);
         //continue;
+        
+        int roll = update_roll(imu->gyro[0]);
+        uint8_t color_select = get_color_select(roll);
 
         if (!is_valid(pos[0], pos[1])) {
             ESP_LOGW(GLOVE_TAG, "Point (%d, %d) detected as outlier. Thrown away.", pos[0], pos[1]);
             continue;
         }
         ESP_LOGI(GLOVE_TAG, "X: %d\tY: %d\n", pos[0], pos[1]);
-        /*point_t* point = median_filter(pos[0], pos[1]);
-        if (!point) {
-            continue;
-        }
-        pos[0] = point->x;
-        pos[1] = point->y;*/
 
         // Scale the aspect ratio of the camera
         pos[0] *= SCALE_X;
         pos[1] = (768 - pos[1]) * SCALE_Y;
         ESP_LOGI(GLOVE_TAG, "Scaled X: %d\tScaled Y: %d\n", pos[0], pos[1]);
 
-        // Draw = true, Erase = false
-        buf[3] = 1;
+        // Draw, erase, and color select
+        //buf[3] |= get_color_select(roll);
+        // TODO: Remove
+        buf[3] = 1 | color_select;
         // x-position
         buf[2] = (pos[0] & 0x3F) << 2;
         buf[1] = (pos[0] & 0x3C0) >> 6;
@@ -576,6 +599,8 @@ void measure_task(void* spp_handle)
         else ESP_LOGI(GLOVE_TAG, "Draw did not get bent\n");
         if (bent_erase) ESP_LOGI(GLOVE_TAG, "Erase got bent\n");
         else ESP_LOGI(GLOVE_TAG, "Erase did not get bent\n");
+
+        free(imu);
 
         esp_spp_write((uint32_t)spp_handle, 4, buf);
         vTaskDelay(10 / portTICK_RATE_MS);
