@@ -246,6 +246,8 @@ imu_t* read_imu() {
 bool is_valid(int x, int y) {
     static int x_prev = 0x3FF;
     static int y_prev = 0x3FF;
+    static int dx_prev = 0x3FF;
+    static int dy_prev = 0x3FF;
     static float theta_prev = FLT_MAX;
     
     if (y == 0x3FF) {
@@ -265,14 +267,19 @@ bool is_valid(int x, int y) {
     if (theta_prev == FLT_MAX) {
         x_prev = x;
         y_prev = y;
+        dx_prev = dx;
+        dy_prev = dy;
         theta_prev = theta;
         return false;
     }
 
-    if (dx < 200 && dy < 200
-            && (theta - theta_prev) < 0.5) {
+    if (abs(dx - dx_prev) < 100 
+            && abs(dy - dy_prev) < 100
+            && (theta - theta_prev) < 1.0) {
         x_prev = x;
         y_prev = y;
+        dx_prev = dx;
+        dy_prev = dy;
         theta_prev = theta;
         return true;
     } else {
