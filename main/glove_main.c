@@ -55,8 +55,8 @@
 #define FLEX2_CHANNEL ADC_CHANNEL_7 // ADC1: GPIO35, ADC2: GPIO27
 #define FLEX1_ATTEN ADC_ATTEN_DB_0 // None
 #define FLEX2_ATTEN ADC_ATTEN_DB_6 // 1/2
-#define FLEX1_BENT_THRESHOLD 4095
-#define FLEX1_UNBENT_THRESHOLD 3000
+#define FLEX1_BENT_THRESHOLD 3400
+#define FLEX1_UNBENT_THRESHOLD 2500
 #define FLEX2_BENT_THRESHOLD 3400
 #define FLEX2_UNBENT_THRESHOLD 2500
 
@@ -273,9 +273,9 @@ bool is_valid(int x, int y) {
         return false;
     }
 
-    if (abs(dx - dx_prev) < 100 
-            && abs(dy - dy_prev) < 100
-            && (theta - theta_prev) < 1.0) {
+    if (abs(dx - dx_prev) < 150 
+            && abs(dy - dy_prev) < 150
+            && fabsf(theta - theta_prev) < 1.0) {
         x_prev = x;
         y_prev = y;
         dx_prev = dx;
@@ -455,6 +455,7 @@ uint8_t get_bent(adc_channel_t channel, uint32_t adc_reading) {
     static uint8_t bent_erase = 0;
     
     if (channel == FLEX1_CHANNEL) {
+        ESP_LOGI(GLOVE_TAG, "Draw ADC Reading: %d", adc_reading);
         if (bent_draw) {
             if (adc_reading <= FLEX1_UNBENT_THRESHOLD) {
                 bent_draw = 0;
@@ -466,6 +467,7 @@ uint8_t get_bent(adc_channel_t channel, uint32_t adc_reading) {
         }
         return bent_draw;
     } else {
+        ESP_LOGI(GLOVE_TAG, "Erase ADC Reading: %d", adc_reading);
         if (bent_erase) {
             if (adc_reading <= FLEX2_UNBENT_THRESHOLD) {
                 bent_erase = 0;
@@ -543,10 +545,14 @@ void measure_task(void* spp_handle)
         // Get state of flex sensors
         uint8_t bent_draw = get_bent(FLEX1_CHANNEL, sample_adc(FLEX1_CHANNEL));
         uint8_t bent_erase = get_bent(FLEX2_CHANNEL, sample_adc(FLEX2_CHANNEL));
-        if (bent_draw && bent_erase) {
+        buf[3] = 0;
+        /*if (bent_draw && bent_erase) {
             buf[3] = 0;
         } else {
             buf[3] = bent_draw | (bent_erase << 1);
+        }*/
+        if (bent_draw ^ bent_erase) {
+            buf[3] = (!bent_draw) | (!bent_erase << 1);
         }
         
         imu_t* imu = read_imu();
@@ -562,6 +568,7 @@ void measure_task(void* spp_handle)
 
         if (!is_valid(pos[0], pos[1])) {
             ESP_LOGW(GLOVE_TAG, "Point (%d, %d) detected as outlier. Thrown away.", pos[0], pos[1]);
+            free(imu);
             continue;
         }
         ESP_LOGI(GLOVE_TAG, "X: %d\tY: %d\n", pos[0], pos[1]);
@@ -572,9 +579,9 @@ void measure_task(void* spp_handle)
         ESP_LOGI(GLOVE_TAG, "Scaled X: %d\tScaled Y: %d\n", pos[0], pos[1]);
 
         // Draw, erase, and color select
-        //buf[3] |= color_select;
+        buf[3] |= color_select;
         // TODO: Remove
-        buf[3] = 1 | color_select;
+        //buf[3] = 1 | color_select;
         // x-position
         buf[2] = (pos[0] & 0x3F) << 2;
         buf[1] = (pos[0] & 0x3C0) >> 6;
@@ -592,7 +599,7 @@ void measure_task(void* spp_handle)
         free(imu);
 
         esp_spp_write((uint32_t)spp_handle, 4, buf);
-        vTaskDelay(10 / portTICK_RATE_MS);
+        vTaskDelay(5 / portTICK_RATE_MS);
     }
 }
 
