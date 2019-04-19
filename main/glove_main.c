@@ -516,13 +516,20 @@ static uint32_t sample_adc(adc_channel_t channel) {
 uint8_t color_state = 0;
 uint8_t update_color_select(int16_t gx) {
     static bool pressed = false;
+    static int count = 0;
     static const int PRESS_THRESHOLD = -30000;
     static const int RELEASE_THRESHOLD = 20000;
     if (!pressed && gx < PRESS_THRESHOLD) {
-        pressed = true;
-        color_state = !color_state;
+        //pressed = true;
+        count++;
+        //color_state = !color_state;
+        if (count >= 1) {
+            pressed = true;
+            color_state = !color_state;
+        }
     } else if (pressed && gx > RELEASE_THRESHOLD) {
         pressed = false;
+        count = 0;
     }
     ESP_LOGI(GLOVE_TAG, "Color select: %d", color_state);
     return color_state << 2;
@@ -534,28 +541,42 @@ uint8_t get_color_select() {
 
 uint8_t get_reset(int16_t gy) {
     static bool pressed = false;
+    static int count = 0;
     static const int PRESS_THRESHOLD = -30000;
     static const int RELEASE_THRESHOLD = 20000;
     if (!pressed && gy < PRESS_THRESHOLD) {
-        pressed = true;
+        //pressed = true;
+        count++;
+        if (count >= 1) {
+            pressed = true;
+            return 1 << 3;
+        }
         ESP_LOGI(GLOVE_TAG, "Reset detected");
-        return 1 << 3;
+        //return 1 << 3;
     } else if (pressed && gy > RELEASE_THRESHOLD) {
         pressed = false;
+        count = 0;
     }
     return 0 << 3;
 }
 
 uint8_t get_mode_toggle(int16_t gx) {
     static bool pressed = false;
+    static int count = 0;
     static const int PRESS_THRESHOLD = -30000;
     static const int RELEASE_THRESHOLD = 20000;
     if (!pressed && gx < PRESS_THRESHOLD) {
-        pressed = true;
+        //pressed = true;
+        count++;
+        if (count >= 1) {
+            pressed = true;
+            return 1 << 4;
+        }
         ESP_LOGI(GLOVE_TAG, "Mode toggle detected");
-        return 1 << 4;
+        //return 1 << 4;
     } else if (pressed && gx > RELEASE_THRESHOLD) {
         pressed = false;
+        count = 0;
     }
     return 0 << 4;
 }
