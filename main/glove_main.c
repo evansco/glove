@@ -55,10 +55,10 @@
 #define FLEX2_CHANNEL ADC_CHANNEL_7 // ADC1: GPIO35, ADC2: GPIO27
 #define FLEX1_ATTEN ADC_ATTEN_DB_0 // None
 #define FLEX2_ATTEN ADC_ATTEN_DB_6 // 1/2
-#define FLEX1_BENT_THRESHOLD 3400
-#define FLEX1_UNBENT_THRESHOLD 2500
-#define FLEX2_BENT_THRESHOLD 3400
-#define FLEX2_UNBENT_THRESHOLD 2500
+#define FLEX1_BENT_THRESHOLD 600
+#define FLEX1_UNBENT_THRESHOLD 400
+#define FLEX2_BENT_THRESHOLD 2000
+#define FLEX2_UNBENT_THRESHOLD 1500
 
 #define SCALE_X (640.f / 1024.f)
 #define SCALE_Y (480.f / 768.f)
@@ -513,8 +513,8 @@ static uint32_t sample_adc(adc_channel_t channel) {
     return adc_reading;
 }
 
-uint8_t get_color_select(int16_t gx) {
-    static uint8_t color_state = 0;
+uint8_t color_state = 0;
+uint8_t update_color_select(int16_t gx) {
     static bool pressed = false;
     static const int PRESS_THRESHOLD = -30000;
     static const int RELEASE_THRESHOLD = 20000;
@@ -528,11 +528,46 @@ uint8_t get_color_select(int16_t gx) {
     return color_state << 2;
 }
 
+uint8_t get_color_select() {
+    return color_state << 2;
+}
+
+uint8_t get_reset(int16_t gy) {
+    static bool pressed = false;
+    static const int PRESS_THRESHOLD = -30000;
+    static const int RELEASE_THRESHOLD = 20000;
+    if (!pressed && gy < PRESS_THRESHOLD) {
+        pressed = true;
+        ESP_LOGI(GLOVE_TAG, "Reset detected");
+        return 1 << 3;
+    } else if (pressed && gy > RELEASE_THRESHOLD) {
+        pressed = false;
+    }
+    return 0 << 3;
+}
+
+uint8_t get_mode_toggle(int16_t gx) {
+    static bool pressed = false;
+    static const int PRESS_THRESHOLD = -30000;
+    static const int RELEASE_THRESHOLD = 20000;
+    if (!pressed && gx < PRESS_THRESHOLD) {
+        pressed = true;
+        ESP_LOGI(GLOVE_TAG, "Mode toggle detected");
+        return 1 << 4;
+    } else if (pressed && gx > RELEASE_THRESHOLD) {
+        pressed = false;
+    }
+    return 0 << 4;
+}
+
 void measure_task(void* spp_handle)
 {
     uint8_t buf[4];
     int pos[2];
     for (;;) {
+        // Reset the buffer
+        memset(buf, 0, 4);
+
         // Read from the camera
         ESP_LOGI(GLOVE_TAG, "Reading from camera...\n");
         ESP_ERROR_CHECK(camera_read(buf));
@@ -564,12 +599,13 @@ void measure_task(void* spp_handle)
         ESP_LOGI(GLOVE_TAG, "gyro: (%d, %d, %d)\n", imu->gyro[0], imu->gyro[1], imu->gyro[2]);
         //continue;
         
-        uint8_t color_select = get_color_select(imu->gyro[0]);
 
+        bool valid = true;
         if (!is_valid(pos[0], pos[1])) {
             ESP_LOGW(GLOVE_TAG, "Point (%d, %d) detected as outlier. Thrown away.", pos[0], pos[1]);
-            free(imu);
-            continue;
+            //free(imu);
+            //continue;
+            valid = false;
         }
         ESP_LOGI(GLOVE_TAG, "X: %d\tY: %d\n", pos[0], pos[1]);
 
@@ -579,7 +615,11 @@ void measure_task(void* spp_handle)
         ESP_LOGI(GLOVE_TAG, "Scaled X: %d\tScaled Y: %d\n", pos[0], pos[1]);
 
         // Draw, erase, and color select
-        buf[3] |= color_select;
+        if (!bent_draw && !bent_erase) {
+            buf[3] |= get_color_select() | get_mode_toggle(imu->gyro[0]);
+        } else {
+            buf[3] |= update_color_select(imu->gyro[0]) | get_reset(imu->gyro[1]);
+        }
         // TODO: Remove
         //buf[3] = 1 | color_select;
         // x-position
@@ -589,7 +629,10 @@ void measure_task(void* spp_handle)
         buf[1] |= (pos[1] & 0xF) << 4;
         buf[0] = (pos[1] & 0x3F0) >> 4;
         // x- and y-movement = true
-        buf[0] |= 0xC0;
+        //buf[0] |= 0xC0;
+        if (valid) {
+            buf[0] |= 0xC0;
+        }
 
         if (bent_draw) ESP_LOGI(GLOVE_TAG, "Draw got bent\n");
         else ESP_LOGI(GLOVE_TAG, "Draw did not get bent\n");
